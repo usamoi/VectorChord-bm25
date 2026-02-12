@@ -102,6 +102,7 @@ jobs:
       matrix:
         version: ["14", "15", "16", "17", "18"]
         arch: ["x86_64", "aarch64"]
+      fail-fast: false
     runs-on: ${{ matrix.arch == 'x86_64' && 'ubuntu-24.04' || 'ubuntu-24.04-arm' }}
 
     env:

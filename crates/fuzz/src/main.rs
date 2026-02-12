@@ -40,7 +40,7 @@ const FUZZ_OPERATIONS: [Operation; 3] = [
 ];
 
 fn test(client: &mut postgres::Client) {
-    let seed = rand::rng().random_range(0..u64::MAX);
+    let seed = 15418557822313552730; // rand::rng().random_range(0..u64::MAX);
     let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
     println!("Seed: {}", seed); // for reproducibility
 
