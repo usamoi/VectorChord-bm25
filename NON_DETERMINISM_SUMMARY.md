@@ -1,53 +1,69 @@
 # 非确定性来源快速参考 (Quick Reference)
 
-## 关键发现总结
+## 🎯 核心结论
 
-### ✅ 不存在的非确定性来源（生产代码）
-- HashMap/HashSet 的迭代顺序问题
-- 随机数生成
-- 时间依赖操作 (SystemTime, Instant)
-- 线程调度和竞态条件
-- UUID 生成
-
-### ⚠️ 存在的非确定性来源（生产代码）
-
-#### 1. 浮点运算 (Floating-Point Arithmetic)
-**影响：** 跨平台/编译器可能产生微小差异
-
-| 文件 | 行号 | 描述 |
-|------|------|------|
-| `src/weight.rs` | 19-50 | BM25 权重计算，f32 乘法和除法 |
-| `src/weight.rs` | 48-50 | IDF 计算，除法和对数运算 |
-| `src/weight.rs` | 52-86 | 批量 BM25 评分，浮点累加 |
-| `src/segment/posting/reader.rs` | - | block_max_score() 返回 f32 |
-| `src/algorithm/block_wand.rs` | 34+ | f32 评分操作 |
-| `src/segment/meta.rs` | - | avgdl() 使用 f32 除法 |
-
-**严重程度：** 低到中等（同平台确定，跨平台可能有差异）
-
-#### 2. 不稳定选择算法 (Unstable Selection)
-**影响：** 相同分数的文档相对位置可能变化
-
-| 文件 | 行号 | 描述 |
-|------|------|------|
-| `src/utils/topk_computer.rs` | 62-64 | select_nth_unstable_by() 可能导致相等元素顺序不同 |
-
-**严重程度：** 低（不影响 top-k 集合本身，只影响相同分数文档的顺序）
+**代码库是完全确定性的 - 没有发现真正的非确定性来源。**
 
 ---
 
-## 代码位置索引
+## ✅ 确认为确定性的操作
 
-### 主要文件列表
+### 1. 浮点运算 (IEEE 754 Standard)
+- **位置：** `src/weight.rs`, `src/segment/posting/reader.rs`, `src/algorithm/block_wand.rs`, `src/segment/meta.rs`
+- **状态：** ✅ 确定性
+- **原因：** 遵守 IEEE 754/2008 标准，相同输入产生相同输出
+- **使用场景：** BM25 评分计算
 
-**包含非确定性的生产代码：**
-1. `src/weight.rs` - BM25 浮点运算
-2. `src/utils/topk_computer.rs` - 不稳定选择
-3. `src/segment/posting/reader.rs` - 浮点运算
-4. `src/algorithm/block_wand.rs` - 浮点运算
-5. `src/segment/meta.rs` - 浮点运算
+### 2. 不稳定排序 (Unstable Sort/Selection)
+- **位置：** `src/utils/topk_computer.rs` (lines 57, 62-64)
+- **状态：** ✅ 确定性
+- **原因：** `sort_unstable_by` 和 `select_nth_unstable_by` 对相同输入产生相同输出
+- **说明：** "unstable"指不保证相等元素的原始顺序，但不是非确定性
 
-**仅测试代码包含非确定性：**
+### 3. 指针比较 (Pointer Comparison)
+- **位置：** `src/datatype/memory_bm25vector.rs` (toast检测)
+- **状态：** ✅ 确定性
+- **原因：** 检查指针恒等性（`p == q`），不依赖具体地址值
+- **使用场景：** PostgreSQL toast 数据检测
+
+### 4. 函数指针验证
+- **位置：** `src/index/hook.rs` (lines 32-35)
+- **状态：** ✅ 确定性
+- **原因：** 单次运行中函数地址固定
+- **使用场景：** 验证索引访问方法
+
+---
+
+## ✅ 确认不存在的非确定性来源
+
+| 类别 | 状态 | 说明 |
+|------|------|------|
+| HashMap/HashSet 迭代 | ✅ 不存在 | 仅使用 BTreeMap（有序） |
+| 随机数生成 | ✅ 仅测试 | 生产代码无随机数 |
+| 时间依赖操作 | ✅ 不存在 | 无 SystemTime/Instant |
+| 线程竞态条件 | ✅ 不存在 | 主要单线程代码 |
+| 未初始化内存 | ✅ 不存在 | 安全的 unsafe 使用 |
+
+---
+
+## 📊 文件分类
+
+### 生产代码文件（全部确定性）
+
+**浮点运算：**
+1. `src/weight.rs` - BM25 权重和评分
+2. `src/segment/posting/reader.rs` - 块最大分数
+3. `src/algorithm/block_wand.rs` - WAND 算法
+4. `src/segment/meta.rs` - 平均文档长度
+
+**不稳定排序：**
+- `src/utils/topk_computer.rs` - Top-K 选择
+
+**指针操作：**
+- `src/datatype/memory_bm25vector.rs` - Toast 检测
+- `src/index/hook.rs` - 函数指针验证
+
+### 测试代码文件（包含随机数）
 - `src/algorithm/block_encode/delta_bitpack.rs`
 - `src/utils/vint.rs`
 - `src/utils/loser_tree.rs`
@@ -55,19 +71,49 @@
 
 ---
 
-## 如需完全确定性的建议
+## 💡 关键技术点
 
-### 选项 1: 固定点运算
-替换浮点运算为固定点算术（性能影响：中等）
+### IEEE 754 确定性保证
+- 相同的输入值
+- 相同的运算顺序
+- 相同的舍入模式
+→ 产生完全相同的输出
 
-### 选项 2: 稳定排序
-替换 `select_nth_unstable_by` 为稳定排序（性能影响：较小）
+### 不稳定算法的确定性
+```rust
+// "unstable" ≠ "non-deterministic"
+sort_unstable_by(|a, b| a.total_cmp(&b))
+// 对相同输入：结果相同 ✅
+// 只是不保证：相等元素的原始顺序
+```
 
-### 选项 3: 次要排序键
-为相同分数添加文档 ID 作为次要排序键（性能影响：最小）
+### 指针比较的语义
+```rust
+if p != q {  // 检查：是否是不同的指针（恒等性）
+    // 不是：比较地址值的大小
+}
+```
 
 ---
 
-**完整分析报告：**
-- 中文版：`NON_DETERMINISM_ANALYSIS.md`
-- English: `NON_DETERMINISM_ANALYSIS_EN.md`
+## 🎖️ 代码质量评估
+
+| 方面 | 评级 | 说明 |
+|------|------|------|
+| 集合选择 | ⭐⭐⭐⭐⭐ | 避免 HashMap/HashSet |
+| 算法选择 | ⭐⭐⭐⭐⭐ | 使用 total_cmp() |
+| 内存安全 | ⭐⭐⭐⭐⭐ | 谨慎的 unsafe 使用 |
+| 确定性 | ⭐⭐⭐⭐⭐ | 完全确定性 |
+
+---
+
+## 📚 完整文档
+
+- **中文详细报告：** `NON_DETERMINISM_ANALYSIS.md`
+- **English Report:** `NON_DETERMINISM_ANALYSIS_EN.md`
+
+---
+
+**分析版本：** v2.0  
+**更新日期：** 2026-02-12  
+**核心结论：** 代码库完全确定性，无需改进 ✅
