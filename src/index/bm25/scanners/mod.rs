@@ -12,17 +12,15 @@
 //
 // Copyright (c) 2025 TensorChord Inc.
 
-mod bm25;
-mod fetcher;
-mod gucs;
-mod hook;
-mod operators;
-mod scanners;
-mod storage;
-mod traverse;
+mod default;
 
-pub fn init() {
-    gucs::init();
-    hook::init();
-    bm25::am::init();
+pub use default::DefaultBuilder;
+
+// todo(usamoi): add a fallback scanner
+
+#[derive(Debug)]
+pub struct SearchOptions {
+    pub limit: u32,
+    #[expect(dead_code)]
+    pub prefilter: bool,
 }

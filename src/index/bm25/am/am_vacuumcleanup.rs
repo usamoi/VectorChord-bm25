@@ -12,17 +12,10 @@
 //
 // Copyright (c) 2025 TensorChord Inc.
 
-mod bm25;
-mod fetcher;
-mod gucs;
-mod hook;
-mod operators;
-mod scanners;
-mod storage;
-mod traverse;
-
-pub fn init() {
-    gucs::init();
-    hook::init();
-    bm25::am::init();
+#[pgrx::pg_guard]
+pub unsafe extern "C-unwind" fn amvacuumcleanup(
+    _info: *mut pgrx::pg_sys::IndexVacuumInfo,
+    _stats: *mut pgrx::pg_sys::IndexBulkDeleteResult,
+) -> *mut pgrx::pg_sys::IndexBulkDeleteResult {
+    unimplemented!()
 }

@@ -12,17 +12,21 @@
 //
 // Copyright (c) 2025 TensorChord Inc.
 
-mod bm25;
-mod fetcher;
-mod gucs;
-mod hook;
-mod operators;
-mod scanners;
-mod storage;
-mod traverse;
+use bm25::types::Bm25IndexOptions;
+use serde::{Deserialize, Serialize};
+use validator::Validate;
 
-pub fn init() {
-    gucs::init();
-    hook::init();
-    bm25::am::init();
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Validate)]
+#[serde(deny_unknown_fields)]
+pub struct Bm25BuildOptions {}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Validate)]
+#[serde(deny_unknown_fields)]
+pub struct Bm25IndexingOptions {
+    #[serde(flatten)]
+    #[validate(nested)]
+    pub index: Bm25IndexOptions,
+    #[serde(default)]
+    #[validate(nested)]
+    pub build: Bm25BuildOptions,
 }

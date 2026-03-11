@@ -1,56 +1,49 @@
+-- List of types
+
 CREATE TYPE bm25vector (
-    INPUT = _bm25catalog_bm25vector_in,
-    OUTPUT = _bm25catalog_bm25vector_out,
-    RECEIVE = _bm25catalog_bm25vector_recv,
-    SEND = _bm25catalog_bm25vector_send,
-    STORAGE = EXTERNAL,
-    INTERNALLENGTH = VARIABLE,
-    ALIGNMENT = double
+    INPUT = _vchord_bm25_bm25vector_in,
+    OUTPUT = _vchord_bm25_bm25vector_out,
+    RECEIVE = _vchord_bm25_bm25vector_recv,
+    SEND = _vchord_bm25_bm25vector_send,
+    STORAGE = external
 );
-
-CREATE OPERATOR = (
-    PROCEDURE = _bm25catalog_bm25vector_operator_eq,
-    LEFTARG = bm25vector,
-    RIGHTARG = bm25vector,
-    COMMUTATOR = =,
-    NEGATOR = <>,
-    RESTRICT = eqsel,
-    JOIN = eqjoinsel
-);
-
-CREATE OPERATOR <> (
-    PROCEDURE = _bm25catalog_bm25vector_operator_neq,
-    LEFTARG = bm25vector,
-    RIGHTARG = bm25vector,
-    COMMUTATOR = <>,
-    NEGATOR = =,
-    RESTRICT = eqsel,
-    JOIN = eqjoinsel
-);
-
-CREATE CAST (int[] AS bm25vector)
-    WITH FUNCTION _vchord_bm25_cast_array_to_bm25vector(int[], integer, boolean) AS IMPLICIT;
 
 CREATE TYPE bm25query AS (
-    index_oid regclass,
-    query_vector bm25vector
+    index regclass,
+    vector bm25vector
 );
 
-CREATE FUNCTION to_bm25query(index_oid regclass, query_vector bm25vector) RETURNS bm25query
-    IMMUTABLE STRICT PARALLEL SAFE LANGUAGE sql AS $$
-        SELECT index_oid, query_vector;
-    $$;
+-- List of operators
 
-CREATE ACCESS METHOD bm25 TYPE INDEX HANDLER _bm25_amhandler;
-COMMENT ON ACCESS METHOD bm25 IS 'vchord bm25 index access method';
-
-CREATE OPERATOR pg_catalog.<&> (
-    PROCEDURE = search_bm25query,
+CREATE OPERATOR <&> (
+    PROCEDURE = _bm25_evaluate,
     LEFTARG = bm25vector,
     RIGHTARG = bm25query
 );
 
+-- List of functions
+
+CREATE FUNCTION fold(int[]) RETURNS bm25vector
+IMMUTABLE STRICT PARALLEL SAFE LANGUAGE c AS 'MODULE_PATHNAME', '_vchord_bm25_bm25vector_fold_wrapper';
+
+CREATE FUNCTION unfold(bm25vector) RETURNS int[]
+IMMUTABLE STRICT PARALLEL SAFE LANGUAGE c AS 'MODULE_PATHNAME', '_vchord_bm25_bm25vector_unfold_wrapper';
+
+CREATE FUNCTION bm25_amhandler(internal) RETURNS index_am_handler
+IMMUTABLE STRICT PARALLEL SAFE LANGUAGE c AS 'MODULE_PATHNAME', '_bm25_amhandler_wrapper';
+
+CREATE FUNCTION bm25query(regclass, bm25vector) RETURNS bm25query
+IMMUTABLE PARALLEL SAFE LANGUAGE sql AS 'SELECT ROW($1, $2)';
+
+-- List of access methods
+
+CREATE ACCESS METHOD bm25 TYPE INDEX HANDLER bm25_amhandler;
+
+-- List of operator families
+
 CREATE OPERATOR FAMILY bm25_ops USING bm25;
 
+-- List of operator classes
+
 CREATE OPERATOR CLASS bm25_ops FOR TYPE bm25vector USING bm25 FAMILY bm25_ops AS
-    OPERATOR 1 pg_catalog.<&>(bm25vector, bm25query) FOR ORDER BY float_ops;
+    OPERATOR 1 <&>(bm25vector, bm25query) FOR ORDER BY float_ops;
