@@ -312,7 +312,6 @@ struct Cursor {
 
     summary: Summary,
     block_upper_bound: f64,
-    filled: bool,
     block: Block,
 }
 
@@ -374,10 +373,15 @@ impl Cursor {
             position_in_block: 0,
             summary,
             block_upper_bound,
-            filled: false,
             block: Block {
+                filled_document_ids: false,
+                filled_term_frequencies: false,
                 document_ids: compression::Decompressed::new(),
+                raw_document_ids: Vec::new(),
+                raw_bitwidth_document_ids: 0,
                 term_frequencies: compression::Decompressed::new(),
+                raw_term_frequencies: Vec::new(),
+                raw_bitwidth_term_frequencies: 0,
             },
             incoming,
         }
@@ -415,7 +419,8 @@ impl Cursor {
             self.summary.wand_fieldnorm,
             self.summary.wand_term_frequency,
         );
-        self.filled = false;
+        self.block.filled_document_ids = false;
+        self.block.filled_term_frequencies = false;
     }
     fn seek<R: RelationRead>(&mut self, index: &R, document_id: u32)
     where
@@ -430,14 +435,33 @@ impl Cursor {
             self.position_in_block = self.summary.number_of_documents - 1;
             return;
         }
-        if !self.filled {
-            fill_block(
-                &mut self.block,
-                index,
-                self.summary.min_document_id,
-                self.summary.wptr_block,
-            );
-            self.filled = true;
+        if !self.block.filled_document_ids {
+            let min_document_id = self.summary.min_document_id;
+            if self.block.filled_term_frequencies {
+                compression::decompress_document_ids(
+                    min_document_id,
+                    self.block.raw_bitwidth_document_ids,
+                    self.block.raw_document_ids.as_slice(),
+                    &mut self.block.document_ids,
+                );
+            } else {
+                let wptr_block = self.summary.wptr_block;
+                let block_guard = index.read(wptr_block.0);
+                let block_bytes = block_guard.get(wptr_block.1).expect("data corruption");
+                let block_tuple = BlockTuple::deserialize_ref(block_bytes);
+                compression::decompress_document_ids(
+                    min_document_id,
+                    block_tuple.bitwidth_document_ids(),
+                    block_tuple.compressed_document_ids(),
+                    &mut self.block.document_ids,
+                );
+                self.block.raw_bitwidth_term_frequencies = block_tuple.bitwidth_term_frequencies();
+                self.block.raw_term_frequencies.clear();
+                self.block
+                    .raw_term_frequencies
+                    .extend_from_slice(block_tuple.compressed_term_frequencies());
+            }
+            self.block.filled_document_ids = true;
         }
         (self.document_id, self.position_in_block) = {
             let document_ids = self.block.document_ids.as_slice();
@@ -456,14 +480,30 @@ impl Cursor {
     where
         R::Page: Page<Opaque = Opaque>,
     {
-        if !self.filled {
-            fill_block(
-                &mut self.block,
-                index,
-                self.summary.min_document_id,
-                self.summary.wptr_block,
-            );
-            self.filled = true;
+        if !self.block.filled_term_frequencies {
+            if self.block.filled_document_ids {
+                compression::decompress_term_frequencies(
+                    self.block.raw_bitwidth_term_frequencies,
+                    self.block.raw_term_frequencies.as_slice(),
+                    &mut self.block.term_frequencies,
+                );
+            } else {
+                let wptr_block = self.summary.wptr_block;
+                let block_guard = index.read(wptr_block.0);
+                let block_bytes = block_guard.get(wptr_block.1).expect("data corruption");
+                let block_tuple = BlockTuple::deserialize_ref(block_bytes);
+                compression::decompress_term_frequencies(
+                    block_tuple.bitwidth_term_frequencies(),
+                    block_tuple.compressed_term_frequencies(),
+                    &mut self.block.term_frequencies,
+                );
+                self.block.raw_bitwidth_document_ids = block_tuple.bitwidth_document_ids();
+                self.block.raw_document_ids.clear();
+                self.block
+                    .raw_document_ids
+                    .extend_from_slice(block_tuple.compressed_document_ids());
+            }
+            self.block.filled_term_frequencies = true;
         }
         self.block.term_frequencies.as_slice()[self.position_in_block as usize]
     }
@@ -481,28 +521,6 @@ where
         wand_term_frequency: 0_u32,
         wptr_block: (u32::MAX, 0),
     })
-}
-
-fn fill_block<R: RelationRead>(
-    block: &mut Block,
-    index: &R,
-    min_document_id: u32,
-    ptr_block: (u32, u16),
-) {
-    let block_guard = index.read(ptr_block.0);
-    let block_bytes = block_guard.get(ptr_block.1).expect("data corruption");
-    let block_tuple = BlockTuple::deserialize_ref(block_bytes);
-    compression::decompress_document_ids(
-        min_document_id,
-        block_tuple.bitwidth_document_ids(),
-        block_tuple.compressed_document_ids(),
-        &mut block.document_ids,
-    );
-    compression::decompress_term_frequencies(
-        block_tuple.bitwidth_term_frequencies(),
-        block_tuple.compressed_term_frequencies(),
-        &mut block.term_frequencies,
-    );
 }
 
 struct Token {
@@ -524,8 +542,14 @@ struct Summary {
 }
 
 struct Block {
+    filled_document_ids: bool,
     document_ids: compression::Decompressed,
+    raw_document_ids: Vec<u8>,
+    raw_bitwidth_document_ids: u8,
+    filled_term_frequencies: bool,
     term_frequencies: compression::Decompressed,
+    raw_term_frequencies: Vec<u8>,
+    raw_bitwidth_term_frequencies: u8,
 }
 
 // Emulate unstable library feature `binary_heap_pop_if`.
